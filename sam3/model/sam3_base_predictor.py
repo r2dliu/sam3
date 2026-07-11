@@ -10,6 +10,7 @@ Subclasses only need to override methods where their behavior differs.
 """
 
 import gc
+import inspect
 import time
 import uuid
 from typing import Dict, List, Optional
@@ -133,6 +134,12 @@ class Sam3BasePredictor:
             init_kwargs["async_loading_frames"] = self.async_loading_frames
         if hasattr(self, "video_loader_type"):
             init_kwargs["video_loader_type"] = self.video_loader_type
+
+        # Filter kwargs to only pass what the model accepts
+        # (e.g. the SAM3.1 multiplex init_state has no offload_state_to_cpu)
+        valid_params = set(inspect.signature(self.model.init_state).parameters.keys())
+        init_kwargs = {k: v for k, v in init_kwargs.items() if k in valid_params}
+
         inference_state = self.model.init_state(**init_kwargs)
 
         if not session_id:
@@ -196,8 +203,6 @@ class Sam3BasePredictor:
 
         # Filter kwargs to only pass what the model accepts
         # (SAM3 has a simpler add_prompt than SAM3.1)
-        import inspect
-
         sig = inspect.signature(self.model.add_prompt)
         valid_params = set(sig.parameters.keys())
         filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
@@ -278,8 +283,6 @@ class Sam3BasePredictor:
                 max_frame_num_to_track=max_frame_num_to_track,
             )
             # Only pass output_prob_thresh / extra kwargs if the model supports them
-            import inspect
-
             sig = inspect.signature(self.model.propagate_in_video)
             if "output_prob_thresh" in sig.parameters:
                 propagate_kwargs["output_prob_thresh"] = output_prob_thresh
