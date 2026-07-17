@@ -1706,7 +1706,9 @@ class Sam3VideoInferenceWithInstanceInteractivity(Sam3VideoInference):
         return
 
 
-def is_image_type(resource_path: str) -> bool:
+def is_image_type(resource_path) -> bool:
     if isinstance(resource_path, list):
+        return len(resource_path) == 1
+    if not isinstance(resource_path, str):
         return len(resource_path) == 1
     return resource_path.lower().endswith(tuple(IMAGE_EXTS))

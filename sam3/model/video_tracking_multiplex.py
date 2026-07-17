@@ -2452,6 +2452,7 @@ class VideoTrackingMultiplex(nn.Module):
         output_dict: dict[str, dict[int, StageOutput]],
         current_out: StageOutput,
         memory_encoder_was_used: bool,
+        track_in_reverse: bool = False,
     ) -> StageOutput:
         # Optionally, offload the outputs to CPU memory during evaluation to avoid
         # GPU OOM on very long videos or very large resolution or too many objects
@@ -2485,21 +2486,22 @@ class VideoTrackingMultiplex(nn.Module):
         ) -> Optional[StageOutput]:
             if past_out is None:
                 return None
-            trimmed_past_out: StageOutput = {
-                "conditioning_objects": past_out["conditioning_objects"],
-                "pred_masks": past_out["pred_masks"],
-                "object_score_logits": past_out["object_score_logits"],
-                # Why would this be current_out?
-                # "multistep_point_inputs": current_out["multistep_point_inputs"],
-                "multistep_point_inputs": past_out["multistep_point_inputs"],
-            }
-            if self.use_obj_ptrs_in_encoder:
-                trimmed_past_out["obj_ptr"] = past_out["obj_ptr"]
-            return trimmed_past_out
+            keep = (
+                "conditioning_objects",
+                "object_score_logits",
+                "multistep_point_inputs",
+                "obj_ptr",
+                "eff_iou_score",
+            )
+            return {k: past_out[k] for k in keep if k in past_out}
 
         if self.trim_past_non_cond_mem_for_eval and not self.training:
             r = self.memory_temporal_stride_for_eval
-            past_frame_idx = frame_idx - r * self.num_maskmem
+            past_frame_idx = (
+                frame_idx + r * self.num_maskmem
+                if track_in_reverse
+                else frame_idx - r * self.num_maskmem
+            )
             past_out = output_dict["non_cond_frame_outputs"].get(past_frame_idx, None)
 
             if past_out is not None:
@@ -2573,7 +2575,11 @@ class VideoTrackingMultiplex(nn.Module):
             need_aux_output=False,
         )
         current_out = self._trim_output_and_memory(
-            frame_idx, output_dict, current_out, memory_encoder_was_used=run_mem_encoder
+            frame_idx,
+            output_dict,
+            current_out,
+            memory_encoder_was_used=run_mem_encoder,
+            track_in_reverse=track_in_reverse,
         )
 
         return current_out
@@ -3422,6 +3428,7 @@ class VideoTrackingDynamicMultiplex(VideoTrackingMultiplex):
             output_dict=output_dict,
             current_out=current_out,
             memory_encoder_was_used=run_mem_encoder,
+            track_in_reverse=track_in_reverse,
         )
 
         return current_out

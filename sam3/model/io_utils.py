@@ -41,6 +41,9 @@ def load_resource_as_video_frames(
     Load video frames from either a video or an image (as a single-frame video).
     Alternatively, if input is a list of PIL images, convert its format
     """
+    if isinstance(resource_path, LazyRenderFrameLoader):
+        resource_path.configure(image_size, img_mean, img_std, offload_video_to_cpu)
+        return resource_path, resource_path.video_height, resource_path.video_width
     if isinstance(resource_path, list):
         img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
         img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
@@ -434,6 +437,55 @@ class AsyncImageFrameLoader:
 
     def __len__(self) -> int:
         return len(self.images)
+
+
+class LazyRenderFrameLoader:
+    """Materialize video frames on demand from a render callback, holding only
+    the most-recently requested frame so RAM stays O(1) regardless of frame
+    count. ``render_fn(i)`` returns an HxWx3 uint8 array; ``configure`` is
+    called by ``load_resource_as_video_frames`` to supply the model's
+    ``image_size`` and normalization.
+    """
+
+    def __init__(self, render_fn, num_frames: int):
+        self.render_fn = render_fn
+        self.num_frames = num_frames
+        self._image_size = None
+        self._img_mean = None
+        self._img_std = None
+        self._offload = True
+        self._idx = None
+        self._img = None
+        self.video_height = None
+        self.video_width = None
+
+    def configure(self, image_size, img_mean, img_std, offload_video_to_cpu):
+        self._image_size = image_size
+        self._img_mean = torch.tensor(img_mean, dtype=torch.float16)[:, None, None]
+        self._img_std = torch.tensor(img_std, dtype=torch.float16)[:, None, None]
+        self._offload = offload_video_to_cpu
+        self.__getitem__(0)
+
+    def __len__(self) -> int:
+        return self.num_frames
+
+    def __getitem__(self, index: int):
+        if index == self._idx:
+            return self._img
+        arr = self.render_fn(index)
+        self.video_height, self.video_width = arr.shape[0], arr.shape[1]
+        img_np = np.array(
+            Image.fromarray(arr).convert("RGB").resize((self._image_size, self._image_size))
+        )
+        img_np = img_np / 255.0
+        img = torch.from_numpy(img_np).permute(2, 0, 1).to(dtype=torch.float16)
+        img -= self._img_mean
+        img /= self._img_std
+        if not self._offload:
+            img = img.cuda()
+        self._idx = index
+        self._img = img
+        return img
 
 
 class TorchCodecDecoder:

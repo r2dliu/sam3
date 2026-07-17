@@ -1032,7 +1032,7 @@ def build_sam3_multiplex_video_model(
         iou_prediction_use_sigmoid=False,
         forward_backbone_per_frame_for_eval=True,
         offload_output_to_cpu_for_eval=False,
-        trim_past_non_cond_mem_for_eval=False,
+        trim_past_non_cond_mem_for_eval=True,
         max_cond_frames_in_attn=4,
         # Dynamic multiplex settings
         is_dynamic_model=True,
