@@ -2352,7 +2352,12 @@ class Sam3MultiplexTrackingWithInteractivity(Sam3MultiplexTracking):
             return
 
         # get SAM2 inference states containing selected obj_ids
+        preflighted_states: set[int] = set()
+        objects_at_start: set[int] = set()
         if propagation_type == "propagation_partial":
+            objects_at_start = {
+                int(i) for i in inference_state["tracker_metadata"]["obj_ids_all_gpu"]
+            }
             # can be empty for GPUs where objects are not in their inference states
             tracker_states_local = self._get_sam2_inference_states_by_obj_ids(
                 inference_state, obj_ids
@@ -2361,10 +2366,28 @@ class Sam3MultiplexTrackingWithInteractivity(Sam3MultiplexTracking):
                 self.tracker.propagate_in_video_preflight(
                     sam2_state, run_mem_encoder=True
                 )
+                preflighted_states.add(id(sam2_state))
 
         for frame_idx in tqdm(processing_order):
             # run SAM2 propagation
             if propagation_type == "propagation_partial":
+                newcomers = [
+                    int(i)
+                    for i in inference_state["tracker_metadata"]["obj_ids_all_gpu"]
+                    if int(i) not in objects_at_start
+                ]
+                if newcomers:
+                    objects_at_start.update(newcomers)
+                    obj_ids = [*obj_ids, *newcomers]
+                    tracker_states_local = self._get_sam2_inference_states_by_obj_ids(
+                        inference_state, obj_ids
+                    )
+                    for sam2_state in tracker_states_local:
+                        if id(sam2_state) not in preflighted_states:
+                            self.tracker.propagate_in_video_preflight(
+                                sam2_state, run_mem_encoder=True
+                            )
+                            preflighted_states.add(id(sam2_state))
                 self._prepare_backbone_feats(inference_state, frame_idx, reverse)
                 obj_ids_local, low_res_masks_local, sam2_scores_local = (
                     self._propogate_tracker_one_frame_local_gpu(
