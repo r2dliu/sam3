@@ -2352,42 +2352,43 @@ class Sam3MultiplexTrackingWithInteractivity(Sam3MultiplexTracking):
             return
 
         # get SAM2 inference states containing selected obj_ids
-        preflighted_states: set[int] = set()
-        objects_at_start: set[int] = set()
+        def _resync_states(obj_ids):
+            # `preflighted` is stamped on the state itself rather than tracked by
+            # id(): removals can free a state and CPython reuses the address.
+            states = self._get_sam2_inference_states_by_obj_ids(
+                inference_state, obj_ids
+            )
+            for sam2_state in states:
+                if not sam2_state.get("_preflighted_for_propagation", False):
+                    self.tracker.propagate_in_video_preflight(
+                        sam2_state, run_mem_encoder=True
+                    )
+                    sam2_state["_preflighted_for_propagation"] = True
+            return states
+
+        live_obj_ids: set[int] = set()
         if propagation_type == "propagation_partial":
-            objects_at_start = {
+            live_obj_ids = {
                 int(i) for i in inference_state["tracker_metadata"]["obj_ids_all_gpu"]
             }
             # can be empty for GPUs where objects are not in their inference states
-            tracker_states_local = self._get_sam2_inference_states_by_obj_ids(
-                inference_state, obj_ids
-            )
-            for sam2_state in tracker_states_local:
-                self.tracker.propagate_in_video_preflight(
-                    sam2_state, run_mem_encoder=True
-                )
-                preflighted_states.add(id(sam2_state))
+            tracker_states_local = _resync_states(obj_ids)
 
         for frame_idx in tqdm(processing_order):
             # run SAM2 propagation
             if propagation_type == "propagation_partial":
-                newcomers = [
+                current = {
                     int(i)
                     for i in inference_state["tracker_metadata"]["obj_ids_all_gpu"]
-                    if int(i) not in objects_at_start
-                ]
-                if newcomers:
-                    objects_at_start.update(newcomers)
-                    obj_ids = [*obj_ids, *newcomers]
-                    tracker_states_local = self._get_sam2_inference_states_by_obj_ids(
-                        inference_state, obj_ids
-                    )
-                    for sam2_state in tracker_states_local:
-                        if id(sam2_state) not in preflighted_states:
-                            self.tracker.propagate_in_video_preflight(
-                                sam2_state, run_mem_encoder=True
-                            )
-                            preflighted_states.add(id(sam2_state))
+                }
+                if current != live_obj_ids:
+                    obj_ids = [
+                        i
+                        for i in [*obj_ids, *sorted(current - live_obj_ids)]
+                        if int(i) in current
+                    ]
+                    live_obj_ids = current
+                    tracker_states_local = _resync_states(obj_ids)
                 self._prepare_backbone_feats(inference_state, frame_idx, reverse)
                 obj_ids_local, low_res_masks_local, sam2_scores_local = (
                     self._propogate_tracker_one_frame_local_gpu(
