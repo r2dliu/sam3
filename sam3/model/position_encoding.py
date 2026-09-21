@@ -51,8 +51,12 @@ class PositionEmbeddingSine(nn.Module):
                 (int(precompute_resolution // 28), int(precompute_resolution // 28)),
                 (precompute_resolution // 32, precompute_resolution // 32),
             ]
+            # `forward` fills this cache lazily anyway, so the precompute is only
+            # a warm-up. Hardcoding cuda here made the detector impossible to
+            # construct on a CPU-only host, which is where the LoRA merge runs.
+            precompute_device = "cuda" if torch.cuda.is_available() else "cpu"
             for size in precompute_sizes:
-                tensors = torch.zeros((1, 1) + size, device="cuda")
+                tensors = torch.zeros((1, 1) + size, device=precompute_device)
                 self.forward(tensors)
                 # further clone and detach it in the cache (just to be safe)
                 self.cache[size] = self.cache[size].clone().detach()

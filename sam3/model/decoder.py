@@ -279,8 +279,13 @@ class TransformerDecoder(nn.Module):
 
             if resolution is not None and stride is not None:
                 feat_size = resolution // stride
+                # Warm-up only; `_get_rpb_matrix` refills this from the real
+                # tensor's device when it is None. Hardcoding cuda made the
+                # decoder impossible to construct on a CPU-only host.
                 coords_h, coords_w = self._get_coords(
-                    feat_size, feat_size, device="cuda"
+                    feat_size,
+                    feat_size,
+                    device="cuda" if torch.cuda.is_available() else "cpu",
                 )
                 self.compilable_cord_cache = (coords_h, coords_w)
                 self.compilable_stored_size = (feat_size, feat_size)
