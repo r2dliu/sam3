@@ -2544,7 +2544,8 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
                 break
 
         # A state's objects added on already-tracked frames have no conditioning frame of
-        # their own, so its last one must outlive the objects that were prompted on it.
+        # their own, so its last one must outlive the objects that were prompted on it:
+        # it stops being an input frame but keeps its output as their memory anchor.
         output_dict = inference_state["output_dict"]
         is_last_shared_cond_frame = (
             batch_size > 1
@@ -2554,10 +2555,11 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
 
         # If this frame has no remaining inputs for any objects, we further clear its
         # conditioning frame status
-        if not frame_has_input and not is_last_shared_cond_frame:
+        if not frame_has_input:
             consolidated_frame_inds = inference_state["consolidated_frame_inds"]
             consolidated_frame_inds["cond_frame_outputs"].discard(frame_idx)
             consolidated_frame_inds["non_cond_frame_outputs"].discard(frame_idx)
+        if not frame_has_input and not is_last_shared_cond_frame:
             # Remove the frame's conditioning output (possibly downgrading it to non-conditioning)
             out = output_dict["cond_frame_outputs"].pop(frame_idx, None)
             if out is not None:
