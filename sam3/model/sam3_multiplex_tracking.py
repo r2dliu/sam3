@@ -2636,6 +2636,32 @@ class Sam3MultiplexTrackingWithInteractivity(Sam3MultiplexTracking):
 
             # update metadata
             tracker_metadata = inference_state["tracker_metadata"]
+            # Detection-path state is indexed by position in obj_ids_all_gpu, so it
+            # must shrink with it or the next frame's planning sees a stale count.
+            keep = tracker_metadata["obj_ids_all_gpu"] != obj_id
+            gpu_meta = tracker_metadata.get("gpu_metadata")
+            if gpu_meta and gpu_meta.get("N_obj", 0) == len(keep):
+                keep_t = torch.from_numpy(keep).to(gpu_meta["removed_mask"].device)
+                for key in (
+                    "obj_first_frame",
+                    "consecutive_unmatch_count",
+                    "trk_keep_alive",
+                    "removed_mask",
+                    "last_occluded_tensor",
+                ):
+                    gpu_meta[key] = gpu_meta[key][keep_t]
+                gpu_meta["overlap_pair_counts"] = gpu_meta["overlap_pair_counts"][
+                    keep_t
+                ][:, keep_t]
+                gpu_meta["N_obj"] = int(keep.sum())
+            confirmation = tracker_metadata.get("rank0_metadata", {}).get(
+                "masklet_confirmation"
+            )
+            if confirmation and len(confirmation["status"]) == len(keep):
+                confirmation["status"] = confirmation["status"][keep]
+                confirmation["consecutive_det_num"] = confirmation[
+                    "consecutive_det_num"
+                ][keep]
             _obj_ids = tracker_metadata["obj_ids_per_gpu"][obj_rank]
             tracker_metadata["obj_ids_per_gpu"][obj_rank] = _obj_ids[_obj_ids != obj_id]
             tracker_metadata["num_obj_per_gpu"][obj_rank] = len(
