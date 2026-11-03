@@ -3093,12 +3093,19 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
         # Step 3: For packed tensor storage, we index the remaining ids and rebuild the per-bucket/per-object slices.
         def _slice_state(output_dict, storage_key):
             for frame_idx, out in output_dict[storage_key].items():
-                out["maskmem_features"] = out["maskmem_features"][buckets_to_keep]
-                out["maskmem_pos_enc"] = [
-                    x[buckets_to_keep] for x in out["maskmem_pos_enc"]
-                ]
-                # "maskmem_pos_enc" is the same across frames, so we only need to store one copy of it
-                out["maskmem_pos_enc"] = self._get_maskmem_pos_enc(inference_state, out)
+                # A frame trimmed by _trim_past_out keeps only obj_ptr, the scores
+                # and the index map; there is no memory or mask left to slice.
+                trimmed = "pred_masks" not in out
+                if out.get("maskmem_features") is not None:
+                    out["maskmem_features"] = out["maskmem_features"][buckets_to_keep]
+                if out.get("maskmem_pos_enc") is not None:
+                    out["maskmem_pos_enc"] = [
+                        x[buckets_to_keep] for x in out["maskmem_pos_enc"]
+                    ]
+                    # "maskmem_pos_enc" is the same across frames, so we only need to store one copy of it
+                    out["maskmem_pos_enc"] = self._get_maskmem_pos_enc(
+                        inference_state, out
+                    )
                 out["obj_ptr"] = out["obj_ptr"][buckets_to_keep]
 
                 # Note that pred_maks and score_logits are stored in a per-object manner
@@ -3115,16 +3122,17 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
                 ]
 
                 # Guard against stale indices by intersecting with available rows
-                max_pred = out["pred_masks"].shape[0]
                 max_scores = out["object_score_logits"].shape[0]
+                max_pred = out["pred_masks"].shape[0] if not trimmed else max_scores
                 keep_indices = [
                     idx
                     for idx in local_remain_old_obj_inds
                     if 0 <= idx < max_pred and 0 <= idx < max_scores
                 ]
-                out["pred_masks"] = out["pred_masks"][keep_indices]
+                if not trimmed:
+                    out["pred_masks"] = out["pred_masks"][keep_indices]
                 out["object_score_logits"] = out["object_score_logits"][keep_indices]
-                if self.use_memory_selection:
+                if self.use_memory_selection and "iou_score" in out:
                     out["iou_score"] = out["iou_score"][keep_indices]
                     out["eff_iou_score"] = self.cal_mem_score(
                         out["object_score_logits"], out["iou_score"]
@@ -3148,10 +3156,12 @@ class VideoTrackingMultiplexDemo(VideoTrackingDynamicMultiplex):
                 out["local_obj_id_to_idx"] = new_local_obj_id_to_idx
                 out["conditioning_objects"] = sliced_conditioning_objects
 
-                # also update the per-object slices
-                self._add_output_per_object(
-                    inference_state, frame_idx, out, storage_key
-                )
+                # also update the per-object slices; a trimmed frame's were already
+                # re-keyed by _map_keys and still hold the objects' own rows
+                if not trimmed:
+                    self._add_output_per_object(
+                        inference_state, frame_idx, out, storage_key
+                    )
 
         _slice_state(inference_state["output_dict"], "cond_frame_outputs")
         _slice_state(inference_state["output_dict"], "non_cond_frame_outputs")

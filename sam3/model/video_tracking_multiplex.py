@@ -2492,6 +2492,8 @@ class VideoTrackingMultiplex(nn.Module):
                 "multistep_point_inputs",
                 "obj_ptr",
                 "eff_iou_score",
+                # remove_objects re-indexes obj_ptr / object_score_logits by it
+                "local_obj_id_to_idx",
             )
             return {k: past_out[k] for k in keep if k in past_out}
 
